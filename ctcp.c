@@ -30,6 +30,8 @@ struct ctcp_state {
 
   conn_t *conn;             /* Connection object -- needed in order to figure
                                out destination when sending */
+
+#if 0
   linked_list_t *segments;  /* Linked list of segments sent to this connection.
                                It may be useful to have multiple linked lists
                                for unacknowledged segments, segments that
@@ -37,6 +39,9 @@ struct ctcp_state {
                                stop-and-wait protocol and therefore does not
                                necessarily need a linked list. You may remove
                                this if this is the case for you */
+#endif
+
+
 
   /* FIXME: Add other needed fields. */
 };
