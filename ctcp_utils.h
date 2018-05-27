@@ -11,6 +11,9 @@
 
 #include "ctcp_sys.h"
 
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define MAX(a,b) (((a)>(b))?(a):(b))
+
 /**
  * Computes a checksum over the given data and returns the result in
  * NETWORK-byte order.
@@ -35,5 +38,9 @@ long current_time();
  * segment: The cTCP segment, in network-byte order.
  */
 void print_hdr_ctcp(ctcp_segment_t *segment);
+
+void print_data_ctcp(ctcp_segment_t *segment);
+void print_ctcp_segment(ctcp_segment_t *segment);
+
 
 #endif /* CTCP_UTILS_H */

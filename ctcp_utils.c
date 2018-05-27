@@ -32,6 +32,28 @@ void print_hdr_ctcp(ctcp_segment_t *segment) {
   if (segment->flags & TH_FIN)
     fprintf(stderr, " FIN");
   /* Keep checksum in network-byte order. */
-  fprintf(stderr, ", window: %d, cksum: %x\n",
+  fprintf(stderr, ", window: %d, cksum: %x",
           ntohs(segment->window), segment->cksum);
 }
+
+void print_data_ctcp(ctcp_segment_t *segment) {
+  int i;
+  int bytes_to_print;
+  bytes_to_print = 20;
+  if ((ntohs(segment->len) - sizeof(ctcp_segment_t)) < bytes_to_print) {
+    bytes_to_print = (ntohs(segment->len) - sizeof(ctcp_segment_t));
+  }
+  fprintf(stderr, ", data: ");
+  for (i = 0; i < bytes_to_print; ++i)
+  {
+    fprintf(stderr, "0x%02x ", segment->data[i]);
+  }
+  fprintf(stderr, "\n");
+}
+
+void print_ctcp_segment(ctcp_segment_t *segment) {
+  print_hdr_ctcp(segment);
+  print_data_ctcp(segment);
+}
+
+

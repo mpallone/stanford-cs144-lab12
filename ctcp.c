@@ -152,7 +152,10 @@ void ctcp_destroy(ctcp_state_t *state) {
     if (len) fprintf(stderr, "\n ** UH OH, %d segments were never acknowledged!\n", len);
     for (i = 0; i < len; ++i)
     {
+      wrapped_ctcp_segment_t* wrapped_ctcp_segment_ptr;
       ll_node_t *front_node_ptr = ll_front(state->tx_state.wrapped_unacked_segments);
+      wrapped_ctcp_segment_ptr = (wrapped_ctcp_segment_t*) front_node_ptr->object;
+      print_ctcp_segment(&wrapped_ctcp_segment_ptr->ctcp_segment);
       free(front_node_ptr->object);
       ll_remove(state->tx_state.wrapped_unacked_segments, front_node_ptr);
     }
@@ -196,16 +199,12 @@ void ctcp_read(ctcp_state_t *state) {
 
     /* Initialize the ctcp segment. Remember that calloc init'd everything to zero.
     ** Most headers should be set by whatever fn actually ships this segment out. */
-    new_segment_ptr->ctcp_segment.len = sizeof(wrapped_ctcp_segment_t) + bytes_read;
+    new_segment_ptr->ctcp_segment.len = htons((uint16_t) sizeof(ctcp_segment_t) + bytes_read);
     /* Copy the data we just read into the segment we just allocated. */
     for (i = 0; i < bytes_read; ++i)
     {
       new_segment_ptr->ctcp_segment.data[i] = buf[i];
     }
-
-
-    /* todo - initialize other members*/
-
 
     /* Add new ctcp segment to our list of unacknowledged segments. */
     ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
