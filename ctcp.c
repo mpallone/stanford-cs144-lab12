@@ -225,24 +225,26 @@ void ctcp_read(ctcp_state_t *state) {
     ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
   }
 
-  /* Try to send the data we just read. */
-  ctcp_send_what_we_can(state_list);
-
   if (bytes_read == -1)
   {
     state->tx_state.has_EOF_been_read = true;
 
-
-
-
-    /* TODO - CREATE A FIN SEGMENT!*/
-
-
-
+    /* Create a FIN segment. */
+    new_segment_ptr = (wrapped_ctcp_segment_t*) calloc(1, sizeof(wrapped_ctcp_segment_t));
+    assert(new_segment_ptr != NULL);
+    new_segment_ptr->ctcp_segment.len = htons((uint16_t) sizeof(ctcp_segment_t));
+    new_segment_ptr->ctcp_segment.seqno = htonl(state->tx_state.last_seqno_read + 1);
+    /* Add new ctcp segment to our list of unacknowledged segments. */
+    ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
+    new_segment_ptr->ctcp_segment.flags |= TH_FIN;
 
     /* TODO REMOVE -- for initial development, end client when we read EOF. */
+    fprintf(stderr, "EOF read, ending client\n");
     ctcp_destroy(state_list);
   }
+
+  /* Try to send the data we just read. */
+  ctcp_send_what_we_can(state_list);
 }
 
 void ctcp_send_what_we_can(ctcp_state_t *state_list) {
@@ -293,14 +295,17 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 
   if (wrapped_segment->num_xmits == MAX_NUM_XMITS) {
     // Assume the other side is unresponsive and destroy the connection.
+    fprintf(stderr, "xmit limit reached\n");
     ctcp_destroy(state);
     return;
   }
 
   /* Set the segment's ctcp header fields. */
   wrapped_segment->ctcp_segment.ackno = htonl(state->rx_state.last_seqno_accepted + 1);
-  wrapped_segment->ctcp_segment.flags |= htonl(TH_ACK);
+  wrapped_segment->ctcp_segment.flags |= TH_ACK;
   wrapped_segment->ctcp_segment.window = htons(state->ctcp_config.recv_window);
+
+  wrapped_segment->ctcp_segment.cksum = 0;
   segment_cksum = cksum(&wrapped_segment->ctcp_segment, ntohs(wrapped_segment->ctcp_segment.len));
   wrapped_segment->ctcp_segment.cksum = segment_cksum;
 
