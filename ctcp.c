@@ -179,7 +179,7 @@ void ctcp_destroy(ctcp_state_t *state) {
 
 void ctcp_read(ctcp_state_t *state) {
   /* FIXME */
-  int bytes_read, i;
+  int bytes_read;
   uint8_t buf[MAX_SEG_DATA_SIZE];
   wrapped_ctcp_segment_t* new_segment_ptr;
 
@@ -201,10 +201,7 @@ void ctcp_read(ctcp_state_t *state) {
     ** Most headers should be set by whatever fn actually ships this segment out. */
     new_segment_ptr->ctcp_segment.len = htons((uint16_t) sizeof(ctcp_segment_t) + bytes_read);
     /* Copy the data we just read into the segment we just allocated. */
-    for (i = 0; i < bytes_read; ++i)
-    {
-      new_segment_ptr->ctcp_segment.data[i] = buf[i];
-    }
+    memcpy(new_segment_ptr->ctcp_segment.data, buf, bytes_read);
 
     /* Add new ctcp segment to our list of unacknowledged segments. */
     ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
