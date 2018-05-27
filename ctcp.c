@@ -180,7 +180,7 @@ void ctcp_read(ctcp_state_t *state) {
   uint8_t buf[MAX_SEG_DATA_SIZE];
   wrapped_ctcp_segment_t* new_segment_ptr;
 
-  if (state->has_EOF_been_read)
+  if (state->tx_state.has_EOF_been_read)
     return;
 
   while ((bytes_read = conn_input(state->conn, buf, MAX_SEG_DATA_SIZE)) > 0)
@@ -219,7 +219,10 @@ void ctcp_read(ctcp_state_t *state) {
 
   if (bytes_read == -1)
   {
-    state->has_EOF_been_read = true;
+    state->tx_state.has_EOF_been_read = true;
+
+    /* TODO REMOVE -- for initial development, end client when we read EOF. */
+    ctcp_destroy(state_list);
   }
 }
 
@@ -231,16 +234,6 @@ void ctcp_output(ctcp_state_t *state) {
   /* FIXME */
 }
 
-#define TIMEOUT_IN_MS 5000
-long time_of_first_call = 0; /* todo remove */
 void ctcp_timer() {
-/*  static long time_of_first_call = current_time();*/
-  if (time_of_first_call == 0) time_of_first_call = current_time();
-
-  /* Simple cleanup for initial development: After this many milliseconds, call
-  ** ctcp_destroy(). Get rid of this eventually.  */
-  if (current_time() - time_of_first_call > TIMEOUT_IN_MS)
-  {
-    ctcp_destroy(state_list);
-  }
+  /* FIXME */
 }
