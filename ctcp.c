@@ -21,8 +21,6 @@
  */
 typedef struct {
   uint32_t last_ackno_rxed;
-  bool has_my_FIN_been_sent; /* Todo - not sure if necessary */
-  bool has_my_FIN_been_acked;
   bool has_EOF_been_read;
 
   /* This should be the index of the LAST byte we have read from conn_input(). */
@@ -126,8 +124,6 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
 
   /* Initialize tx_state */
   state->tx_state.last_ackno_rxed = 0;
-  state->tx_state.has_my_FIN_been_sent = false;
-  state->tx_state.has_my_FIN_been_acked = false;
   state->tx_state.has_EOF_been_read = false;
   state->tx_state.last_seqno_read = 0;
   state->tx_state.last_seqno_sent = 0;
