@@ -45,6 +45,9 @@ typedef struct {
 typedef struct {
   uint32_t last_seqno_accepted; /* Use this to generate ackno's when sending. */
   bool has_FIN_been_rxed;
+  uint32_t num_truncated_segments;
+  uint32_t num_out_of_order_segments;
+  uint32_t num_invalid_cksums;
 
   /* This should be a linked list of ctcp_segment_t*'s.  */
   linked_list_t* segments_to_output;
@@ -134,6 +137,9 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
   /* Initialize rx_state */
   state->rx_state.last_seqno_accepted = 0;
   state->rx_state.has_FIN_been_rxed = false;
+  state->rx_state.num_truncated_segments = 0;
+  state->rx_state.num_out_of_order_segments = 0;
+  state->rx_state.num_invalid_cksums = 0;
   /* TODO: DON'T FORGET TO CALL LL_DESTROY()! */
   state->rx_state.segments_to_output = ll_create();
 
@@ -144,6 +150,15 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
 void ctcp_destroy(ctcp_state_t *state) {
   unsigned int len, i;
   if (state) {
+
+    // Print any final statistics.
+    fprintf(stderr, "state->rx_state.num_truncated_segments:    %u\n",
+            state->rx_state.num_truncated_segments);
+    fprintf(stderr, "state->rx_state.num_out_of_order_segments: %u\n",
+            state->rx_state.num_out_of_order_segments);
+    fprintf(stderr, "state->rx_state.num_invalid_cksums:        %u\n",
+            state->rx_state.num_invalid_cksums);
+
     /* Update linked list. */
     if (state->next)
       state->next->prev = state->prev;
@@ -327,10 +342,65 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 
 
 void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
-  /* FIXME */
-  /*
-  ** TODO - walk through data model and make sure I'm updating everything
-  */
+
+  uint16_t computed_cksum, actual_cksum;
+
+  /* If the segment was truncated, ignore it and hopefully retransmission will fix it. */
+  if (len < ntohs(segment->len)) {
+    fprintf(stderr, "Ignoring truncated segment.   ");
+    print_ctcp_segment(segment);
+    free(segment);
+    state->rx_state.num_truncated_segments++;
+    return;
+  }
+
+  /* If the segment arrived out of order, ignore it. */
+  if (ntohl(segment->seqno) != (state->rx_state.last_seqno_accepted + 1)) {
+    fprintf(stderr, "Ignoring out of order segment.   ");
+    print_ctcp_segment(segment);
+    free(segment);
+    state->rx_state.num_out_of_order_segments++;
+    return;
+  }
+
+  // Check the checksum.
+  actual_cksum = segment->cksum;
+  segment->cksum = 0;
+  computed_cksum = cksum(segment, ntohs(segment->len));
+  // put it back in case we want to examine the value later
+  segment->cksum = actual_cksum;
+  if (actual_cksum != computed_cksum)
+  {
+    fprintf(stderr, "Invalid cksum! Computed=0x%04x, Actual=0x%04x    ",
+            computed_cksum, actual_cksum);
+    print_ctcp_segment(segment);
+    free(segment);
+    state->rx_state.num_invalid_cksums++;
+    return;
+  }
+
+  // todo remove
+  fprintf(stderr, "Looks like we got a valid segment\n");
+  print_ctcp_segment(segment);
+  free(segment);
+
+
+
+  // update rx_state.last_seqno_accepted
+
+  // if ACK flag is set, update tx_state.last_ackno_rxed
+
+  // if FIN flag is set, update rx_state.has_FIN_been_rxed
+
+  // send an ack
+
+  // append the segment to segments_to_output
+
+  // call ctcp_output to output the segment
+
+  // call update_unacked_segment_list.
+
+  /* TODO - not sure how, but we're responsible for freeing 'segment' */
 }
 
 void ctcp_output(ctcp_state_t *state) {
@@ -338,6 +408,10 @@ void ctcp_output(ctcp_state_t *state) {
   /*
   ** TODO - walk through data model and make sure I'm updating everything
   */
+}
+
+void update_unacked_segment_list(ctcp_state_t *state) {
+  // We'll need to call this after successfully receiving a segment
 }
 
 void ctcp_timer() {
