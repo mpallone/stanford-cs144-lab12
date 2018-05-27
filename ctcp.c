@@ -176,7 +176,7 @@ void ctcp_destroy(ctcp_state_t *state) {
 
 void ctcp_read(ctcp_state_t *state) {
   /* FIXME */
-  int bytes_read;
+  int bytes_read, i;
   uint8_t buf[MAX_SEG_DATA_SIZE];
   wrapped_ctcp_segment_t* new_segment_ptr;
 
@@ -191,10 +191,14 @@ void ctcp_read(ctcp_state_t *state) {
                                   sizeof(wrapped_ctcp_segment_t) + bytes_read);
     assert(new_segment_ptr != NULL);
 
-    /* Initialize the ctcp segment */
-    new_segment_ptr->num_xmits = 0;
-    new_segment_ptr->timestamp_of_last_send = 0;
-    new_segment_ptr->ctcp_segment.seqno = 0;
+    /* Initialize the ctcp segment. Remember that calloc init'd everything to zero.
+    ** Most headers should be set by whatever fns actually ship this segment out. */
+    new_segment_ptr->ctcp_segment.len = sizeof(wrapped_ctcp_segment_t) + bytes_read;
+    for (i = 0; i < bytes_read; ++i)
+    {
+      new_segment_ptr->ctcp_segment.data[i] = buf[i];
+    }
+
 
     /* todo - initialize other members*/
     /* DONT FORGET TO ALLOCATE DATA, AND FREE IT IN CTCP_DESTROY! */
