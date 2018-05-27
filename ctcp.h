@@ -28,6 +28,9 @@
  */
 #define MAX_SEG_DATA_SIZE 1440
 
+/* Xmit no more than 6 times (i.e., 5 rexmits). */
+#define MAX_NUM_XMITS 6
+
 /**
  * cTCP flags.
  *
