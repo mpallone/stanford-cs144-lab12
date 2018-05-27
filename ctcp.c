@@ -180,6 +180,9 @@ void ctcp_read(ctcp_state_t *state) {
   uint8_t buf[MAX_SEG_DATA_SIZE];
   wrapped_ctcp_segment_t* new_segment_ptr;
 
+  if (state->has_EOF_been_read)
+    return;
+
   while ((bytes_read = conn_input(state->conn, buf, MAX_SEG_DATA_SIZE)) > 0)
   {
     /* todo remove */
@@ -192,8 +195,9 @@ void ctcp_read(ctcp_state_t *state) {
     assert(new_segment_ptr != NULL);
 
     /* Initialize the ctcp segment. Remember that calloc init'd everything to zero.
-    ** Most headers should be set by whatever fns actually ship this segment out. */
+    ** Most headers should be set by whatever fn actually ships this segment out. */
     new_segment_ptr->ctcp_segment.len = sizeof(wrapped_ctcp_segment_t) + bytes_read;
+    /* Copy the data we just read into the segment we just allocated. */
     for (i = 0; i < bytes_read; ++i)
     {
       new_segment_ptr->ctcp_segment.data[i] = buf[i];
@@ -201,7 +205,7 @@ void ctcp_read(ctcp_state_t *state) {
 
 
     /* todo - initialize other members*/
-    /* DONT FORGET TO ALLOCATE DATA, AND FREE IT IN CTCP_DESTROY! */
+
 
     /* Add new ctcp segment to our list of unacknowledged segments. */
     ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
@@ -213,8 +217,10 @@ void ctcp_read(ctcp_state_t *state) {
     */
   }
 
-  /* TODO: handle the case when bytes_read == 1 */
-
+  if (bytes_read == -1)
+  {
+    state->has_EOF_been_read = true;
+  }
 }
 
 void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
