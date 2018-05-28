@@ -16,6 +16,8 @@
 #include "ctcp_sys.h"
 #include "ctcp_utils.h"
 
+#undef ENABLE_DBG_PRINTS
+
 /******************************************************************************
  * Variable/struct declarations
  *****************************************************************************/
@@ -76,6 +78,12 @@ struct ctcp_state {
   struct ctcp_state **prev; /* Prev in linked list */
   conn_t *conn;             /* Connection object -- needed in order to figure
                                out destination when sending */
+
+  /* This will be set when we first detect that we should close down a
+  ** connection, so that we can wait twice the maximum segment lifetime before
+  ** actually closing down the connection. */
+  long FIN_WAIT_start_time;
+
   ctcp_config_t ctcp_config;
   tx_state_t tx_state;
   rx_state_t rx_state;
@@ -109,9 +117,9 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 
 /**
  * This should be called after tx_state.last_ackno_rxed has been updated in
- * order to clean out wrapped_unacked_segments.
+ * order to clean out wrapped_unacked_segments that have now been acked.
  */
-void update_unacked_segment_list(ctcp_state_t *state);
+void ctcp_clean_up_unacked_segment_list(ctcp_state_t *state);
 
 /******************************************************************************
  * Function implementations.
@@ -134,7 +142,8 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
 
   /* Set fields. */
   state->conn = conn;
-  /* FIXME: Do any other initialization here. */
+
+  state->FIN_WAIT_start_time = 0;
 
   /* Initialize ctcp_config */
   state->ctcp_config.recv_window = cfg->recv_window;
@@ -148,7 +157,6 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
   state->tx_state.last_seqno_read = 0;
   state->tx_state.last_seqno_sent = 0;
   state->tx_state.timestamp_of_last_send = 0;
-  /* TODO: DON'T FORGET TO CALL LL_DESTROY()! */
   state->tx_state.wrapped_unacked_segments = ll_create();
 
   /* Initialize rx_state */
@@ -157,7 +165,6 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
   state->rx_state.num_truncated_segments = 0;
   state->rx_state.num_out_of_order_segments = 0;
   state->rx_state.num_invalid_cksums = 0;
-  /* TODO: DON'T FORGET TO CALL LL_DESTROY()! */
   state->rx_state.segments_to_output = ll_create();
 
   free(cfg);
@@ -169,12 +176,14 @@ void ctcp_destroy(ctcp_state_t *state) {
   if (state) {
 
     // Print any final statistics.
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "state->rx_state.num_truncated_segments:    %u\n",
             state->rx_state.num_truncated_segments);
     fprintf(stderr, "state->rx_state.num_out_of_order_segments: %u\n",
             state->rx_state.num_out_of_order_segments);
     fprintf(stderr, "state->rx_state.num_invalid_cksums:        %u\n",
             state->rx_state.num_invalid_cksums);
+    #endif
 
     /* Update linked list. */
     if (state->next)
@@ -187,13 +196,17 @@ void ctcp_destroy(ctcp_state_t *state) {
 
     /* Free everything in the list of unacknowledged segments. */
     len = ll_length(state->tx_state.wrapped_unacked_segments);
+    #ifdef ENABLE_DBG_PRINTS
     if (len) fprintf(stderr, "\n ** UH OH, %d segments were never acknowledged!\n", len);
+    #endif
     for (i = 0; i < len; ++i)
     {
-      wrapped_ctcp_segment_t* wrapped_ctcp_segment_ptr;
       ll_node_t *front_node_ptr = ll_front(state->tx_state.wrapped_unacked_segments);
-      wrapped_ctcp_segment_ptr = (wrapped_ctcp_segment_t*) front_node_ptr->object;
+      #ifdef ENABLE_DBG_PRINTS
+      wrapped_ctcp_segment_t* wrapped_ctcp_segment_ptr =
+                              (wrapped_ctcp_segment_t*) front_node_ptr->object;
       print_ctcp_segment(&wrapped_ctcp_segment_ptr->ctcp_segment);
+      #endif
       free(front_node_ptr->object);
       ll_remove(state->tx_state.wrapped_unacked_segments, front_node_ptr);
     }
@@ -201,7 +214,9 @@ void ctcp_destroy(ctcp_state_t *state) {
 
     /* Free everything in the list of segments to output. */
     len = ll_length(state->rx_state.segments_to_output);
+    #ifdef ENABLE_DBG_PRINTS
     if (len) fprintf(stderr, "\n *** UH OH, %d segments were never output!\n", len);
+    #endif
     for (i = 0; i < len; ++i)
     {
       ll_node_t *front_node_ptr = ll_front(state->rx_state.segments_to_output);
@@ -226,9 +241,10 @@ void ctcp_read(ctcp_state_t *state) {
 
   while ((bytes_read = conn_input(state->conn, buf, MAX_SEG_DATA_SIZE)) > 0)
   {
-    /* todo remove */
     buf[bytes_read] = 0;
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "Read %d bytes: %s\n", bytes_read, buf);
+    #endif
 
     /* create a new ctcp segment */
     new_segment_ptr = (wrapped_ctcp_segment_t*) calloc(1,
@@ -262,13 +278,9 @@ void ctcp_read(ctcp_state_t *state) {
     assert(new_segment_ptr != NULL);
     new_segment_ptr->ctcp_segment.len = htons((uint16_t) sizeof(ctcp_segment_t));
     new_segment_ptr->ctcp_segment.seqno = htonl(state->tx_state.last_seqno_read + 1);
+    new_segment_ptr->ctcp_segment.flags |= TH_FIN;
     /* Add new ctcp segment to our list of unacknowledged segments. */
     ll_add(state->tx_state.wrapped_unacked_segments, new_segment_ptr);
-    new_segment_ptr->ctcp_segment.flags |= TH_FIN;
-
-    /* TODO REMOVE -- for initial development, end client when we read EOF. */
-    fprintf(stderr, "EOF read, ending client\n");
-    ctcp_destroy(state_list);
   }
 
   /* Try to send the data we just read. */
@@ -323,7 +335,9 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 
   if (wrapped_segment->num_xmits >= MAX_NUM_XMITS) {
     // Assume the other side is unresponsive and destroy the connection.
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "xmit limit reached\n");
+    #endif
     ctcp_destroy(state);
     return;
   }
@@ -345,7 +359,9 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
   if (bytes_sent == 0)
     return; // can't send for some reason, try again later.
   if (bytes_sent == -1) {
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "conn_send returned -1.\n");
+    #endif
     ctcp_destroy(state); // ya done now
     return;
   }
@@ -364,8 +380,10 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
 
   /* If the segment was truncated, ignore it and hopefully retransmission will fix it. */
   if (len < ntohs(segment->len)) {
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "Ignoring truncated segment.   ");
     print_ctcp_segment(segment);
+    #endif
     free(segment);
     state->rx_state.num_truncated_segments++;
     return;
@@ -376,11 +394,13 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
   /* If the segment arrived out of order, ignore it. */
   if (   (ntohl(segment->seqno) != (state->rx_state.last_seqno_accepted + 1))
       && (num_data_bytes != 0)) {
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "Ignoring out of order segment. ");
     fprintf(stderr, " ntohl(segment->seqno): %d", ntohl(segment->seqno));
     fprintf(stderr, " state->rx_state.last_seqno_accepted + 1: %d\n",
                       state->rx_state.last_seqno_accepted + 1);
     print_ctcp_segment(segment);
+    #endif
     free(segment);
     state->rx_state.num_out_of_order_segments++;
     return;
@@ -394,17 +414,20 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
   segment->cksum = actual_cksum;
   if (actual_cksum != computed_cksum)
   {
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "Invalid cksum! Computed=0x%04x, Actual=0x%04x    ",
             computed_cksum, actual_cksum);
     print_ctcp_segment(segment);
+    #endif
     free(segment);
     state->rx_state.num_invalid_cksums++;
     return;
   }
 
-  // todo remove
+  #ifdef ENABLE_DBG_PRINTS
   fprintf(stderr, "Looks like we got a valid segment with %d bytes\n", num_data_bytes);
   print_ctcp_segment(segment);
+  #endif
 
   // update rx_state.last_seqno_accepted
   if (num_data_bytes) {
@@ -420,21 +443,27 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
   if (segment->flags & TH_FIN) {
     state->rx_state.has_FIN_been_rxed = true;
     // A FIN should advance the sequence number.
+    #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "received FIN, incrementing state->rx_state.last_seqno_accepted\n");
+    #endif
     state->rx_state.last_seqno_accepted++;
   }
 
   // append the segment to segments_to_output. We should only output data if
   // the segment has data to output, or if we've received a FIN (in which case
   // we'll need to output EOF.)
-  if (num_data_bytes || (segment->flags & TH_FIN))
+  if (num_data_bytes || (segment->flags & TH_FIN)) {
     ll_add(state->rx_state.segments_to_output, segment);
+  } else {
+    // We've updated our state and can free the segment.
+    free(segment);
+  }
 
   // Output as many received segments as we can.
   ctcp_output(state);
 
   /* The ackno has probably advanced, so clean up our list of unacked segments. */
-  update_unacked_segment_list(state);
+  ctcp_clean_up_unacked_segment_list(state);
 }
 
 void ctcp_output(ctcp_state_t *state) {
@@ -467,7 +496,10 @@ void ctcp_output(ctcp_state_t *state) {
 
       return_value = conn_output(state->conn, ctcp_segment_ptr->data, num_data_bytes);
       if (return_value == -1) {
+        #ifdef ENABLE_DBG_PRINTS
         fprintf(stderr, "conn_output() returned -1");
+        #endif
+
         ctcp_destroy(state);
         return;
       }
@@ -499,7 +531,7 @@ void ctcp_output(ctcp_state_t *state) {
 
 // We'll need to call this after successfully receiving a segment to clean
 // acknowledged segments out of wrapped_unacked_segments
-void update_unacked_segment_list(ctcp_state_t *state) {
+void ctcp_clean_up_unacked_segment_list(ctcp_state_t *state) {
   ll_node_t* front_node_ptr;
   wrapped_ctcp_segment_t* wrapped_ctcp_segment_ptr;
   uint32_t seqno_of_last_byte;
@@ -514,9 +546,11 @@ void update_unacked_segment_list(ctcp_state_t *state) {
 
     if (seqno_of_last_byte < state->tx_state.last_ackno_rxed) {
       // This segment has been acknowledged.
+      #ifdef ENABLE_DBG_PRINTS
       fprintf(stderr,
               "Cleaning out acknowledged segment with seqno_of_last_byte: %d\n",
               seqno_of_last_byte);
+      #endif
       free(wrapped_ctcp_segment_ptr);
       ll_remove(state->tx_state.wrapped_unacked_segments, front_node_ptr);
     } else {
@@ -530,14 +564,43 @@ void ctcp_timer() {
 
   ctcp_state_t * curr_state;
 
+  if (state_list == NULL) return;
+
   /*
   ** For lab 1 stop and wait, we only have to worry about one connection.
   */
   curr_state = state_list;
 
-  /* FIXME */
-  ctcp_send_what_we_can(curr_state);
   ctcp_output(curr_state);
+  ctcp_send_what_we_can(curr_state);
+
+  /* See if we need close down the connection. We can do this if:
+   *   - FIN has been received from the other end (i.e., they have no more data
+   *     to send us)
+   *   - EOF has been read (i.e., user has no more data to send)
+   *   - wrapped_unacked_segments is empty (i.e., all data we've sent
+   *     (including the final FIN) has been acked)
+   *   - segments_to_output is empty (i.e., we've nothing more to output)
+   */
+
+  if (   (curr_state->rx_state.has_FIN_been_rxed)
+      && (curr_state->tx_state.has_EOF_been_read)
+      && (ll_length(curr_state->tx_state.wrapped_unacked_segments) == 0)
+      && (ll_length(curr_state->rx_state.segments_to_output) == 0)) {
+
+    // Wait twice the maximum segment lifetime before tearing down the connection.
+    if (curr_state->FIN_WAIT_start_time == 0) {
+      #ifdef ENABLE_DBG_PRINTS
+      fprintf(stderr, "Closing down connection after 2xMSL...");
+      #endif
+      curr_state->FIN_WAIT_start_time = current_time();
+    } else if ((current_time() - curr_state->FIN_WAIT_start_time) > (2*MAX_SEG_LIFETIME_MS)) {
+      #ifdef ENABLE_DBG_PRINTS
+      fprintf(stderr, "now closing down the connection.\n");
+      #endif
+      ctcp_destroy(curr_state);
+    }
+  }
 
   /*
   ** TODO - walk through data model and make sure I'm updating everything

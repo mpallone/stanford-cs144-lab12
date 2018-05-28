@@ -29,7 +29,10 @@
 #define MAX_SEG_DATA_SIZE 1440
 
 /* Xmit no more than 6 times (i.e., 5 rexmits). */
-#define MAX_NUM_XMITS 6
+#define MAX_NUM_XMITS  6
+
+// This is normally 60s, but I don't want to wait that long.
+#define MAX_SEG_LIFETIME_MS  4000
 
 /**
  * cTCP flags.
