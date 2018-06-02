@@ -229,7 +229,8 @@ void ctcp_destroy(ctcp_state_t *state) {
 void ctcp_read(ctcp_state_t *state) {
   /* FIXME */
   int bytes_read;
-  uint8_t buf[MAX_SEG_DATA_SIZE];
+  // I add 1 here so that I can add null terminator in debug code
+  uint8_t buf[MAX_SEG_DATA_SIZE+1];
   wrapped_ctcp_segment_t* new_segment_ptr;
 
   if (state->tx_state.has_EOF_been_read)
@@ -237,8 +238,8 @@ void ctcp_read(ctcp_state_t *state) {
 
   while ((bytes_read = conn_input(state->conn, buf, MAX_SEG_DATA_SIZE)) > 0)
   {
-    buf[bytes_read] = 0;
     #ifdef ENABLE_DBG_PRINTS
+    buf[bytes_read] = 0; // add null terminator
     fprintf(stderr, "Read %d bytes: %s\n", bytes_read, buf);
     #endif
 
