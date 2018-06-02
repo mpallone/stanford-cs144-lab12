@@ -511,7 +511,7 @@ void ctcp_output(ctcp_state_t *state) {
     // sender until buffer space is available.
     ctcp_segment.seqno = htonl(0); // I don't think seqno matters for pure control segments
     ctcp_segment.ackno = htonl(state->rx_state.last_seqno_accepted + 1);
-    ctcp_segment.len   = 0;
+    ctcp_segment.len   = sizeof(ctcp_segment_t);
     ctcp_segment.flags = TH_ACK;
     ctcp_segment.window = htons(state->ctcp_config.recv_window);
     ctcp_segment.cksum = 0;
