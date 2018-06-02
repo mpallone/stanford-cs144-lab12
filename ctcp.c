@@ -37,9 +37,6 @@ typedef struct {
   ** 1010. I.e., it's the sequence number of the last byte we've sent.  */
   uint32_t last_seqno_sent;
 
-  /* If this is too old, we can send a keepalive. */
-  long timestamp_of_last_send;
-
   /* Make this point to a metadata wrapper:
   **     --> wrapped_segment:
   **             - num xmits
@@ -156,7 +153,6 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
   state->tx_state.has_EOF_been_read = false;
   state->tx_state.last_seqno_read = 0;
   state->tx_state.last_seqno_sent = 0;
-  state->tx_state.timestamp_of_last_send = 0;
   state->tx_state.wrapped_unacked_segments = ll_create();
 
   /* Initialize rx_state */
@@ -369,7 +365,6 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 
   /* Update state */
   state->tx_state.last_seqno_sent += bytes_sent;
-  state->tx_state.timestamp_of_last_send = timestamp;
   wrapped_segment->num_xmits++;
   wrapped_segment->timestamp_of_last_send = timestamp;
 }
