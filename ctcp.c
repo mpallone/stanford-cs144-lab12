@@ -37,7 +37,7 @@ typedef struct {
   ** 1010. I.e., it's the sequence number of the last byte we've sent.  */
   uint32_t last_seqno_sent;
 
-  /* Make this point to a metadata wrapper:
+  /* Make this point to a wrapped_ctcp_segment_t:
   **     --> wrapped_segment:
   **             - num xmits
   **             - timestamp of last send
