@@ -118,6 +118,12 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
  */
 void ctcp_clean_up_unacked_segment_list(ctcp_state_t *state);
 
+/**
+ * Send a cTCP segment with no data, so that we can inform whoever's on the
+ * other end of the connection of our current state.
+ */
+void ctcp_send_control_segment(ctcp_state_t *state);
+
 /******************************************************************************
  * Function implementations.
  *****************************************************************************/
@@ -354,7 +360,12 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
   timestamp = current_time();
 
   /*if (bytes_sent == 0)*/
-  if (bytes_sent < (wrapped_segment->ctcp_segment.len) )
+  if (bytes_sent < ntohs(wrapped_segment->ctcp_segment.len) )
+    #ifdef ENABLE_DBG_PRINTS
+    fprintf(stderr, "conn_send returned %d bytes instead of %d :-(\n",
+            bytes_sent, ntohs(wrapped_segment->ctcp_segment.len));
+    wrapped_segment->num_xmits++;
+    #endif
     return; // can't send for some reason, try again later.
   if (bytes_sent == -1) {
     #ifdef ENABLE_DBG_PRINTS
@@ -386,23 +397,6 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
     return;
   }
 
-  num_data_bytes = ntohs(segment->len) - sizeof(ctcp_segment_t);
-
-  /* If the segment arrived out of order, ignore it. */
-  if (   (ntohl(segment->seqno) != (state->rx_state.last_seqno_accepted + 1))
-      && (num_data_bytes != 0)) {
-    #ifdef ENABLE_DBG_PRINTS
-    fprintf(stderr, "Ignoring out of order segment. ");
-    fprintf(stderr, " ntohl(segment->seqno): %d", ntohl(segment->seqno));
-    fprintf(stderr, " state->rx_state.last_seqno_accepted + 1: %d\n",
-                      state->rx_state.last_seqno_accepted + 1);
-    print_ctcp_segment(segment);
-    #endif
-    free(segment);
-    state->rx_state.num_out_of_order_segments++;
-    return;
-  }
-
   // Check the checksum.
   actual_cksum = segment->cksum;
   segment->cksum = 0;
@@ -420,6 +414,28 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
     state->rx_state.num_invalid_cksums++;
     return;
   }
+
+  num_data_bytes = ntohs(segment->len) - sizeof(ctcp_segment_t);
+
+  /* If the segment arrived out of order, ignore it. */
+  if (   (ntohl(segment->seqno) != (state->rx_state.last_seqno_accepted + 1))
+      && (num_data_bytes != 0)) {
+    #ifdef ENABLE_DBG_PRINTS
+    fprintf(stderr, "Ignoring out of order segment. ");
+    fprintf(stderr, " ntohl(segment->seqno): %d", ntohl(segment->seqno));
+    fprintf(stderr, " state->rx_state.last_seqno_accepted + 1: %d\n",
+                      state->rx_state.last_seqno_accepted + 1);
+    print_ctcp_segment(segment);
+    #endif
+    free(segment);
+    state->rx_state.num_out_of_order_segments++;
+    // Our 'ACK' of the out of order segment might have been lost, so send it
+    // again.
+    ctcp_send_control_segment(state);
+    return;
+  }
+
+
 
   #ifdef ENABLE_DBG_PRINTS
   fprintf(stderr, "Looks like we got a valid segment with %d bytes\n", num_data_bytes);
@@ -470,7 +486,6 @@ void ctcp_output(ctcp_state_t *state) {
   size_t bufspace;
   int num_data_bytes;
   int return_value;
-  ctcp_segment_t ctcp_segment;
 
   if (state == NULL)
     return;
@@ -509,15 +524,7 @@ void ctcp_output(ctcp_state_t *state) {
 
     // Send an ack. Acking here (instead of in ctcp_receive) flow controls the
     // sender until buffer space is available.
-    ctcp_segment.seqno = htonl(0); // I don't think seqno matters for pure control segments
-    ctcp_segment.ackno = htonl(state->rx_state.last_seqno_accepted + 1);
-    ctcp_segment.len   = sizeof(ctcp_segment_t);
-    ctcp_segment.flags = TH_ACK;
-    ctcp_segment.window = htons(state->ctcp_config.recv_window);
-    ctcp_segment.cksum = 0;
-    ctcp_segment.cksum = cksum(&ctcp_segment, sizeof(ctcp_segment_t));
-    // deliberately ignore return value
-    conn_send(state->conn, &ctcp_segment, sizeof(ctcp_segment_t));
+    ctcp_send_control_segment(state);
 
     // We've successfully output the segment, so remove it from the linked
     // list.
@@ -555,6 +562,22 @@ void ctcp_clean_up_unacked_segment_list(ctcp_state_t *state) {
       return;
     }
   }
+}
+
+void ctcp_send_control_segment(ctcp_state_t *state)
+{
+  ctcp_segment_t ctcp_segment;
+
+  ctcp_segment.seqno = htonl(0); // I don't think seqno matters for pure control segments
+  ctcp_segment.ackno = htonl(state->rx_state.last_seqno_accepted + 1);
+  ctcp_segment.len   = sizeof(ctcp_segment_t);
+  ctcp_segment.flags = TH_ACK;
+  ctcp_segment.window = htons(state->ctcp_config.recv_window);
+  ctcp_segment.cksum = 0;
+  ctcp_segment.cksum = cksum(&ctcp_segment, sizeof(ctcp_segment_t));
+
+  // deliberately ignore return value
+  conn_send(state->conn, &ctcp_segment, sizeof(ctcp_segment_t));
 }
 
 void ctcp_timer() {
