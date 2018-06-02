@@ -356,7 +356,8 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
                          ntohs(wrapped_segment->ctcp_segment.len));
   timestamp = current_time();
 
-  if (bytes_sent == 0)
+  /*if (bytes_sent == 0)*/
+  if (bytes_sent < (wrapped_segment->ctcp_segment.len) )
     return; // can't send for some reason, try again later.
   if (bytes_sent == -1) {
     #ifdef ENABLE_DBG_PRINTS
@@ -480,7 +481,7 @@ void ctcp_output(ctcp_state_t *state) {
 
   while (ll_length(state->rx_state.segments_to_output) != 0) {
 
-    // Grab the node we're going to try to output.
+    // Grab the segment we're going to try to output.
     front_node_ptr = ll_front(state->rx_state.segments_to_output);
     ctcp_segment_ptr = (ctcp_segment_t*) front_node_ptr->object;
 
