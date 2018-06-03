@@ -49,7 +49,7 @@ typedef struct {
   uint32_t last_seqno_accepted; /* Use this to generate ackno's when sending. */
   bool has_FIN_been_rxed;
   uint32_t num_truncated_segments;
-  uint32_t num_out_of_order_segments;
+  uint32_t num_out_of_window_segments;
   uint32_t num_invalid_cksums;
 
   /* This should be a linked list of ctcp_segment_t*'s.  */
@@ -173,7 +173,7 @@ ctcp_state_t *ctcp_init(conn_t *conn, ctcp_config_t *cfg) {
   state->rx_state.last_seqno_accepted = 0;
   state->rx_state.has_FIN_been_rxed = false;
   state->rx_state.num_truncated_segments = 0;
-  state->rx_state.num_out_of_order_segments = 0;
+  state->rx_state.num_out_of_window_segments = 0;
   state->rx_state.num_invalid_cksums = 0;
   state->rx_state.segments_to_output = ll_create();
 
@@ -189,8 +189,8 @@ void ctcp_destroy(ctcp_state_t *state) {
     #ifdef ENABLE_DBG_PRINTS
     fprintf(stderr, "state->rx_state.num_truncated_segments:    %u\n",
             state->rx_state.num_truncated_segments);
-    fprintf(stderr, "state->rx_state.num_out_of_order_segments: %u\n",
-            state->rx_state.num_out_of_order_segments);
+    fprintf(stderr, "state->rx_state.num_out_of_window_segments: %u\n",
+            state->rx_state.num_out_of_window_segments);
     fprintf(stderr, "state->rx_state.num_invalid_cksums:        %u\n",
             state->rx_state.num_invalid_cksums);
     #endif
@@ -264,7 +264,7 @@ void ctcp_read(ctcp_state_t *state) {
     /*
     ** Create a new ctcp segment.
     **
-    ** TODO - An implementation that would lead to less memory fragmentation
+    ** An implementation that would lead to less memory fragmentation
     ** would be to allocate consistent sized blocks. Not sure if I'll have
     ** time for that.
     */
@@ -336,9 +336,9 @@ void ctcp_send_what_we_can(ctcp_state_t *state_list) {
     wrapped_ctcp_segment_ptr = (wrapped_ctcp_segment_t *) curr_node_ptr->object;
 
     // Empty segments shouldn't make it into wrapped_unacked_segments.
-    assert (wrapped_ctcp_segment_ptr->ctcp_segment.len == 0);
+    assert (wrapped_ctcp_segment_ptr->ctcp_segment.len != 0);
 
-    last_seqno_of_segment = wrapped_ctcp_segment_ptr->ctcp_segment.seqno
+    last_seqno_of_segment = ntohl(wrapped_ctcp_segment_ptr->ctcp_segment.seqno)
       + ctcp_get_num_data_bytes(&wrapped_ctcp_segment_ptr->ctcp_segment) - 1;
 
     // Subtract 1 because the ackno is byte they want next, not the last byte
@@ -455,6 +455,7 @@ void ctcp_send_segment(ctcp_state_t *state, wrapped_ctcp_segment_t* wrapped_segm
 void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
 
   uint16_t computed_cksum, actual_cksum, num_data_bytes;
+  uint32_t last_seqno_of_segment, largest_allowable_seqno, smallest_allowable_seqno;
 
   /* If the segment was truncated, ignore it and hopefully retransmission will fix it. */
   if (len < ntohs(segment->len)) {
@@ -487,9 +488,30 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
 
   num_data_bytes = ntohs(segment->len) - sizeof(ctcp_segment_t);
 
-  /*
-  ** TODO - THIS NEEDS TO CHANGE FOR LAB2. Only ignore if outside sliding window
-  */
+  if (num_data_bytes) {
+    last_seqno_of_segment = ntohl(segment->seqno) + num_data_bytes - 1;
+    smallest_allowable_seqno = state->rx_state.last_seqno_accepted + 1;
+    largest_allowable_seqno = state->rx_state.last_seqno_accepted
+      + state->ctcp_config.recv_window;
+
+    // Reject the segment if it's outside of the receive window.
+    if ((last_seqno_of_segment > largest_allowable_seqno) ||
+        (ntohl(segment->seqno) < smallest_allowable_seqno)) {
+      #ifdef  ENABLE_DBG_PRINTS
+      fprintf(stderr, "Ignoring out of window segment. ");
+      print_ctcp_segment(segment);
+      #endif
+      free(segment);
+      // Let the sender know our state, since they sent a wonky packet. Maybe
+      // our previous ack was lost.
+      ctcp_send_control_segment(state);
+      state->rx_state.num_out_of_window_segments++;
+      return;
+    }
+  }
+
+/* Lab 1 */
+#if 0
   /* If the segment arrived out of order, ignore it. */
   if (   (ntohl(segment->seqno) != (state->rx_state.last_seqno_accepted + 1))
       && (num_data_bytes != 0)) {
@@ -510,6 +532,7 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
     ctcp_send_control_segment(state);
     return;
   }
+#endif
 
   #ifdef ENABLE_DBG_PRINTS
   fprintf(stderr, "Looks like we got a valid segment with %d bytes\n", num_data_bytes);
@@ -675,7 +698,7 @@ void ctcp_send_control_segment(ctcp_state_t *state) {
 
 uint16_t ctcp_get_num_data_bytes(ctcp_segment_t* ctcp_segment_ptr)
 {
-  return ctcp_segment_ptr->len - sizeof(ctcp_segment_t);
+  return ntohs(ctcp_segment_ptr->len) - sizeof(ctcp_segment_t);
 }
 
 void ctcp_timer() {
