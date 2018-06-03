@@ -456,6 +456,10 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
 
   uint16_t computed_cksum, actual_cksum, num_data_bytes;
   uint32_t last_seqno_of_segment, largest_allowable_seqno, smallest_allowable_seqno;
+  unsigned int length, i;
+  ll_node_t* ll_node_ptr;
+  ctcp_segment_t* ctcp_segment_ptr;
+
 
   /* If the segment was truncated, ignore it and hopefully retransmission will fix it. */
   if (len < ntohs(segment->len)) {
@@ -488,13 +492,13 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
 
   num_data_bytes = ntohs(segment->len) - sizeof(ctcp_segment_t);
 
+  // Reject the segment if it's outside of the receive window.
   if (num_data_bytes) {
     last_seqno_of_segment = ntohl(segment->seqno) + num_data_bytes - 1;
     smallest_allowable_seqno = state->rx_state.last_seqno_accepted + 1;
     largest_allowable_seqno = state->rx_state.last_seqno_accepted
       + state->ctcp_config.recv_window;
 
-    // Reject the segment if it's outside of the receive window.
     if ((last_seqno_of_segment > largest_allowable_seqno) ||
         (ntohl(segment->seqno) < smallest_allowable_seqno)) {
       #ifdef  ENABLE_DBG_PRINTS
@@ -524,7 +528,6 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
     #endif
     free(segment);
 
-    /* TODO - this should probably change to 'num_out_of_window_segments' */
     state->rx_state.num_out_of_order_segments++;
 
     // Our 'ACK' of the out of order segment might have been lost, so send it
@@ -539,48 +542,122 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
   print_ctcp_segment(segment);
   #endif
 
-  /*
-  ** TODO: MOVE THIS TO ctcp_output
-  */
-  // update rx_state.last_seqno_accepted
-  if (num_data_bytes) {
-    state->rx_state.last_seqno_accepted += num_data_bytes;
-  }
-
-  /*
-  ** TODO: MOVE THIS TO ctcp_output
-  */
   // if ACK flag is set, update tx_state.last_ackno_rxed
   if (segment->flags & TH_ACK) {
     state->tx_state.last_ackno_rxed = ntohl(segment->ackno);
   }
 
-  /*
-  ** TODO: MOVE THIS TO ctcp_output
-  */
-  // if FIN flag is set, update rx_state.has_FIN_been_rxed
-  if (segment->flags & TH_FIN) {
-    state->rx_state.has_FIN_been_rxed = true;
-    // A FIN should advance the sequence number.
-    #ifdef ENABLE_DBG_PRINTS
-    fprintf(stderr, "received FIN, incrementing state->rx_state.last_seqno_accepted\n");
-    #endif
-    state->rx_state.last_seqno_accepted++;
-  }
 
   /*
-  ** TODO - rather than blindly adding, we'll have to add *in order*, and
-  ** possibly throw away the segment if we already have it. Remember that above
-  ** we should be checking that the segment is within the sliding window, so
-  ** we shouldn't have to check for that here.
+  ** Try to add the segment to segments_to_output. We should only output data if
+  ** the segment has data to output, or if we've received a FIN (in which case
+  ** we'll need to output EOF.)
   */
-  // append the segment to segments_to_output. We should only output data if
-  // the segment has data to output, or if we've received a FIN (in which case
-  // we'll need to output EOF.)
-  if (num_data_bytes || (segment->flags & TH_FIN)) {
-    ll_add(state->rx_state.segments_to_output, segment);
-  } else {
-    // We've updated our state and can free the segment.
+  if (num_data_bytes || (segment->flags & TH_FIN))
+  {
+    /*
+    ** We need to add the segment to the linked list segments_to_output in
+    ** sorted order, taking care to throw away/free it if it's a duplicate.
+    */
+    length = ll_length(state->rx_state.segments_to_output);
+
+    if (length == 0)
+    {
+      ll_add(state->rx_state.segments_to_output, segment);
+    }
+    else if (length == 1)
+    {
+      ll_node_ptr = ll_front(state->rx_state.segments_to_output);
+      ctcp_segment_ptr = (ctcp_segment_t*) ll_node_ptr->object;
+      if (ntohl(segment->seqno) == ntohl(ctcp_segment_ptr->seqno))
+      {
+        // The segment we received is a duplicate, so throw it away.
+        free(segment);
+      }
+      else if (ntohl(segment->seqno) > ntohl(ctcp_segment_ptr->seqno))
+      {
+        // the new segment comes after the one segment we have
+        ll_add(state->rx_state.segments_to_output, segment);
+      }
+      else
+      {
+        // the new segment comes earlier than the one segment we have
+        ll_add_front(state->rx_state.segments_to_output, segment);
+      }
+    }
+    else
+    {
+      // We have at least two nodes, and need to figure out what to do with the
+      // new segment.
+      ctcp_segment_t* first_ctcp_segment_ptr;
+      ctcp_segment_t* last_ctcp_segment_ptr;
+      ll_node_t* first_ll_node_ptr;
+      ll_node_t* last_ll_node_ptr;
+
+      first_ll_node_ptr = ll_front(state->rx_state.segments_to_output);
+      last_ll_node_ptr  = ll_back(state->rx_state.segments_to_output);
+
+      first_ctcp_segment_ptr = (ctcp_segment_t*) first_ll_node_ptr->object;
+      last_ctcp_segment_ptr  = (ctcp_segment_t*) last_ll_node_ptr->object;
+
+      // See if we should add the segment to the end of the list.
+      if (ntohl(segment->seqno) > ntohl(last_ctcp_segment_ptr->seqno))
+      {
+        ll_add(state->rx_state.segments_to_output, segment);
+      }
+      // See if we should add the segment to the beginning of the list.
+      else if (ntohl(segment->seqno) < ntohl(first_ctcp_segment_ptr->seqno))
+      {
+        ll_add_front(state->rx_state.segments_to_output, segment);
+      }
+      // The segment is either a duplicate, or it belongs *between* two nodes.
+      else
+      {
+        for (i = 0; i < (length-1); ++i) // for every *pair* of nodes
+        {
+          ll_node_t* curr_node_ptr;
+          ll_node_t* next_node_ptr;
+
+          ctcp_segment_t* curr_ctcp_segment_ptr;
+          ctcp_segment_t* next_ctcp_segment_ptr;
+
+          if (i == 0) {
+            curr_node_ptr = ll_front(state->rx_state.segments_to_output);
+          } else {
+            curr_node_ptr = curr_node_ptr->next;
+          }
+          next_node_ptr = curr_node_ptr->next;
+
+          curr_ctcp_segment_ptr = (ctcp_segment_t*) curr_node_ptr->object;
+          next_ctcp_segment_ptr = (ctcp_segment_t*) next_node_ptr->object;
+
+          // Check for duplicates.
+          if ((ntohl(segment->seqno) == ntohl(curr_ctcp_segment_ptr->seqno)) ||
+              (ntohl(segment->seqno) == ntohl(next_ctcp_segment_ptr->seqno)))
+          {
+            // Duplicate found.
+            free(segment);
+            break;
+          }
+          else
+          {
+            // See if we can add the node between the two nodes.
+            if ((ntohl(segment->seqno) > ntohl(curr_ctcp_segment_ptr->seqno)) &&
+                (ntohl(segment->seqno) < ntohl(next_ctcp_segment_ptr->seqno)))
+            {
+              ll_add_after(state->rx_state.segments_to_output, curr_node_ptr, segment);
+              break;
+            }
+          }
+        } /* End of  `for (i = 0; i < length; ++i) `  */
+      }
+    }
+
+  } /* End of  `if (num_data_bytes || (segment->flags & TH_FIN))`    */
+  else
+  {
+    // Segment contains no data, so don't update the linked list. We've updated
+    // our state at this point and can free the segment.
     free(segment);
   }
 
@@ -635,9 +712,21 @@ void ctcp_output(ctcp_state_t *state) {
       assert(return_value == num_data_bytes);
     }
 
-    // If this segment's FIN flag is set, output EOF by setting length to 0.
-    if (ctcp_segment_ptr->flags & TH_FIN)
+    // update rx_state.last_seqno_accepted
+    if (num_data_bytes) {
+      state->rx_state.last_seqno_accepted += num_data_bytes;
+    }
+
+    // If this segment's FIN flag is set, output EOF by setting length to 0,
+    // and update state.
+    if (ctcp_segment_ptr->flags & TH_FIN) {
+      state->rx_state.has_FIN_been_rxed = true;
+      #ifdef ENABLE_DBG_PRINTS
+      fprintf(stderr, "received FIN, incrementing state->rx_state.last_seqno_accepted\n");
+      #endif
+      state->rx_state.last_seqno_accepted++;
       conn_output(state->conn, ctcp_segment_ptr->data, 0);
+    }
 
     // Send an ack. Acking here (instead of in ctcp_receive) flow controls the
     // sender until buffer space is available.
