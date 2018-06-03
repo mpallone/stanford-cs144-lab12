@@ -37,7 +37,7 @@ rm -f reference_copy
 xterm -e "sudo ./$executable -s -p 8888 > reference_copy" &
 server_pid=$!
 echo "Server spawned with PID $server_pid"
-sleep 3s # Give server time to start up
+sleep 6s # Give server time to start up
 
 # Spawn client
 xterm -e "sudo ./$executable -p 9999 -c localhost:8888 < reference" &
@@ -46,7 +46,7 @@ echo "Client spawned with PID: $client_pid"
 
 sleep 4s # Give time for the file to transfer.
 
-diff reference reference_copy
+cmp reference reference_copy
 return_code=$?
 if [ "$return_code" -eq "0" ]; then
     echo "*** Test 1 passed - successfully sent reference binary to server."
@@ -56,12 +56,13 @@ fi
 
 kill $server_pid
 kill $client_pid
+rm -f reference_copy
+
 
 ###############################################################################
 # Test 2 -- Send 'reference' again, but with a 5% unreliable network.
 ###############################################################################
 
-rm -f reference_copy
 
 # ctcp connection will be problematic this percentage of the time
 unreliability=5
@@ -82,7 +83,7 @@ echo "Client spawned with PID: $client_pid"
 # not need much more time than that.
 sleep 8s
 
-diff reference reference_copy
+cmp reference reference_copy
 return_code=$?
 if [ "$return_code" -eq "0" ]; then
     echo "*** Test 2 passed - send reference binary over unreliable network."
@@ -92,17 +93,16 @@ fi
 
 kill $server_pid
 kill $client_pid
+rm -f reference_copy
+
 
 
 ###############################################################################
 # Test 3 -- Send 'reference' again, but with an even more unreliable network.
 ###############################################################################
 
-rm -f reference_copy
 
-# ctcp connection will be problematic this percentage of the time
 seed=1338
-
 
 # Spawn server
 xterm -e "sudo ./$executable -s -p 8888                --drop 10 --corrupt 10 --delay 15 --duplicate 15  --seed $seed > reference_copy" &
@@ -119,7 +119,7 @@ echo "Client spawned with PID: $client_pid"
 # reference implementation takes.
 sleep 12s
 
-diff reference reference_copy
+cmp reference reference_copy
 return_code=$?
 if [ "$return_code" -eq "0" ]; then
     echo "*** Test 3 passed - send reference binary over an even more unreliable network."
