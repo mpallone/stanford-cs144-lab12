@@ -16,7 +16,7 @@
 #include "ctcp_sys.h"
 #include "ctcp_utils.h"
 
-#undef ENABLE_DBG_PRINTS
+#define ENABLE_DBG_PRINTS
 
 /******************************************************************************
  * Variable/struct declarations
@@ -229,6 +229,10 @@ void ctcp_destroy(ctcp_state_t *state) {
 
     free(state);
   }
+  #ifdef ENABLE_DBG_PRINTS
+  fprintf(stderr, "\n\nStarting infinite loop...\n\n");
+  while (1); // Loop forever to allow output to be seen.
+  #endif
   end_client();
 }
 
@@ -509,7 +513,7 @@ void ctcp_output(ctcp_state_t *state) {
       return_value = conn_output(state->conn, ctcp_segment_ptr->data, num_data_bytes);
       if (return_value == -1) {
         #ifdef ENABLE_DBG_PRINTS
-        fprintf(stderr, "conn_output() returned -1");
+        fprintf(stderr, "conn_output() returned -1\n");
         #endif
 
         ctcp_destroy(state);
@@ -621,8 +625,4 @@ void ctcp_timer() {
       ctcp_destroy(curr_state);
     }
   }
-
-  /*
-  ** TODO - walk through data model and make sure I'm updating everything
-  */
 }
