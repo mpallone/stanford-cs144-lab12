@@ -16,7 +16,7 @@
 #include "ctcp_sys.h"
 #include "ctcp_utils.h"
 
-#define ENABLE_DBG_PRINTS
+#undef ENABLE_DBG_PRINTS
 
 /******************************************************************************
  * Variable/struct declarations
@@ -238,8 +238,8 @@ void ctcp_destroy(ctcp_state_t *state) {
     free(state);
   }
   #ifdef ENABLE_DBG_PRINTS
-  fprintf(stderr, "\n\nStarting infinite loop...\n\n");
-  while (1); // Loop forever to allow output to be seen.
+  // fprintf(stderr, "\n\nStarting infinite loop...\n\n");
+  // while (1); // Loop forever to allow output to be seen.
   #endif
   end_client();
 }
@@ -345,6 +345,10 @@ void ctcp_send_what_we_can(ctcp_state_t *state_list) {
     // they've received.
     last_allowable_seqno = curr_state->tx_state.last_ackno_rxed - 1
       + curr_state->ctcp_config.send_window;
+
+    if (curr_state->tx_state.last_ackno_rxed == 0) {
+      ++last_allowable_seqno; // last_ackno_rxed starts at 0
+    }
 
     // If the segment is outside of the sliding window, then we're done.
     // "maintain invariant (LSS-LAR <= SWS)"
@@ -459,7 +463,6 @@ void ctcp_receive(ctcp_state_t *state, ctcp_segment_t *segment, size_t len) {
   unsigned int length, i;
   ll_node_t* ll_node_ptr;
   ctcp_segment_t* ctcp_segment_ptr;
-
 
   /* If the segment was truncated, ignore it and hopefully retransmission will fix it. */
   if (len < ntohs(segment->len)) {
@@ -675,15 +678,11 @@ void ctcp_output(ctcp_state_t *state) {
   size_t bufspace;
   int num_data_bytes;
   int return_value;
+  int num_segments_output = 0;
 
   if (state == NULL)
     return;
 
-
-  /*
-  ** TODO - this logic will have to change to output in order, watching out
-  ** for holes.
-  */
   while (ll_length(state->rx_state.segments_to_output) != 0) {
 
     // Grab the segment we're going to try to output.
@@ -693,6 +692,14 @@ void ctcp_output(ctcp_state_t *state) {
     num_data_bytes = ntohs(ctcp_segment_ptr->len) - sizeof(ctcp_segment_t);
     // Output any data in this segment.
     if (num_data_bytes) {
+
+      // Check the segment's sequence number. There might be a hole in
+      // segments_to_output, in which case we should give up.
+      if ( ntohl(ctcp_segment_ptr->seqno) != state->rx_state.last_seqno_accepted + 1)
+      {
+        return;
+      }
+
       // See if there's enough bufspace right now to output.
       bufspace = conn_bufspace(state->conn);
       if (bufspace < num_data_bytes) {
@@ -710,6 +717,7 @@ void ctcp_output(ctcp_state_t *state) {
         return;
       }
       assert(return_value == num_data_bytes);
+      num_segments_output++;
     }
 
     // update rx_state.last_seqno_accepted
@@ -719,23 +727,26 @@ void ctcp_output(ctcp_state_t *state) {
 
     // If this segment's FIN flag is set, output EOF by setting length to 0,
     // and update state.
-    if (ctcp_segment_ptr->flags & TH_FIN) {
+    if ((!state->rx_state.has_FIN_been_rxed) && (ctcp_segment_ptr->flags & TH_FIN)) {
       state->rx_state.has_FIN_been_rxed = true;
       #ifdef ENABLE_DBG_PRINTS
       fprintf(stderr, "received FIN, incrementing state->rx_state.last_seqno_accepted\n");
       #endif
       state->rx_state.last_seqno_accepted++;
       conn_output(state->conn, ctcp_segment_ptr->data, 0);
+      num_segments_output++;
     }
-
-    // Send an ack. Acking here (instead of in ctcp_receive) flow controls the
-    // sender until buffer space is available.
-    ctcp_send_control_segment(state);
 
     // We've successfully output the segment, so remove it from the linked
     // list.
     free(ctcp_segment_ptr);
     ll_remove(state->rx_state.segments_to_output, front_node_ptr);
+  }
+
+  if (num_segments_output) {
+    // Send an ack. Acking here (instead of in ctcp_receive) flow controls the
+    // sender until buffer space is available.
+    ctcp_send_control_segment(state);
   }
 }
 
