@@ -8,4 +8,5 @@ make
 #sudo ./ctcp -s -p 8888
 
 # Lab 2
-sudo ./ctcp -s -p 8888 -w 6
+sudo ./ctcp -s -p 8888 -w 6 > reference_copy
+#sudo valgrind --leak-check=full --show-leak-kinds=all ./ctcp -s -p 8888 -w 6
