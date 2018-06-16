@@ -805,39 +805,37 @@ void ctcp_timer() {
 
   if (state_list == NULL) return;
 
-  /*
-  ** For lab 1 stop and wait, we only have to worry about one connection.
-  */
-  curr_state = state_list;
+  for (curr_state = state_list; curr_state != NULL; curr_state = curr_state->next) {
 
-  ctcp_output(curr_state);
-  ctcp_send_what_we_can(curr_state);
+    ctcp_output(curr_state);
+    ctcp_send_what_we_can(curr_state);
 
-  /* See if we need close down the connection. We can do this if:
-   *   - FIN has been received from the other end (i.e., they have no more data
-   *     to send us)
-   *   - EOF has been read (i.e., user has no more data to send)
-   *   - wrapped_unacked_segments is empty (i.e., all data we've sent
-   *     (including the final FIN) has been acked)
-   *   - segments_to_output is empty (i.e., we've nothing more to output)
-   */
+    /* See if we need close down the connection. We can do this if:
+     *   - FIN has been received from the other end (i.e., they have no more data
+     *     to send us)
+     *   - EOF has been read (i.e., user has no more data to send)
+     *   - wrapped_unacked_segments is empty (i.e., all data we've sent
+     *     (including the final FIN) has been acked)
+     *   - segments_to_output is empty (i.e., we've nothing more to output)
+     */
 
-  if (   (curr_state->rx_state.has_FIN_been_rxed)
-      && (curr_state->tx_state.has_EOF_been_read)
-      && (ll_length(curr_state->tx_state.wrapped_unacked_segments) == 0)
-      && (ll_length(curr_state->rx_state.segments_to_output) == 0)) {
+    if (   (curr_state->rx_state.has_FIN_been_rxed)
+        && (curr_state->tx_state.has_EOF_been_read)
+        && (ll_length(curr_state->tx_state.wrapped_unacked_segments) == 0)
+        && (ll_length(curr_state->rx_state.segments_to_output) == 0)) {
 
-    // Wait twice the maximum segment lifetime before tearing down the connection.
-    if (curr_state->FIN_WAIT_start_time == 0) {
-      #ifdef ENABLE_DBG_PRINTS
-      fprintf(stderr, "Closing down connection after 2xMSL...");
-      #endif
-      curr_state->FIN_WAIT_start_time = current_time();
-    } else if ((current_time() - curr_state->FIN_WAIT_start_time) > (2*MAX_SEG_LIFETIME_MS)) {
-      #ifdef ENABLE_DBG_PRINTS
-      fprintf(stderr, "now closing down the connection.\n");
-      #endif
-      ctcp_destroy(curr_state);
+      // Wait twice the maximum segment lifetime before tearing down the connection.
+      if (curr_state->FIN_WAIT_start_time == 0) {
+        #ifdef ENABLE_DBG_PRINTS
+        fprintf(stderr, "Closing down connection after 2xMSL...");
+        #endif
+        curr_state->FIN_WAIT_start_time = current_time();
+      } else if ((current_time() - curr_state->FIN_WAIT_start_time) > (2*MAX_SEG_LIFETIME_MS)) {
+        #ifdef ENABLE_DBG_PRINTS
+        fprintf(stderr, "now closing down the connection.\n");
+        #endif
+        ctcp_destroy(curr_state);
+      }
     }
   }
 }
