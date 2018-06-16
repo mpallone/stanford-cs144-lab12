@@ -8,5 +8,5 @@ make
 #sudo ./ctcp -p 9999 -c localhost:8888
 
 # Lab 2
-sudo ./ctcp -p 9999 -c localhost:8888 -w 5 < reference
+sudo ./ctcp -p 9999 -c localhost:8888 -w 5
 #sudo valgrind --leak-check=full --show-leak-kinds=all ./ctcp -p 9999 -c localhost:8888 -w 5
