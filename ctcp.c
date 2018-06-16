@@ -308,27 +308,25 @@ void ctcp_read(ctcp_state_t *state) {
   ctcp_send_what_we_can(state_list);
 }
 
-void ctcp_send_what_we_can(ctcp_state_t *state_list) {
+void ctcp_send_what_we_can(ctcp_state_t *state) {
 
-  ctcp_state_t *curr_state;
   wrapped_ctcp_segment_t *wrapped_ctcp_segment_ptr;
   ll_node_t *curr_node_ptr;
   long ms_since_last_send;
   unsigned int i, length;
   uint32_t last_seqno_of_segment, last_allowable_seqno;
 
-  if (state_list == NULL)
+  if (state == NULL)
     return;
 
-  curr_state = state_list; /* todo - implement multiple connections later */
-  length = ll_length(curr_state->tx_state.wrapped_unacked_segments);
+  length = ll_length(state->tx_state.wrapped_unacked_segments);
   if (length == 0)
     /* todo - this will have to be 'continue' or something for multiple connections */
     return;
 
   for (i = 0; i < length; ++i) {
     if (i == 0) {
-      curr_node_ptr = ll_front(curr_state->tx_state.wrapped_unacked_segments);
+      curr_node_ptr = ll_front(state->tx_state.wrapped_unacked_segments);
     } else {
       curr_node_ptr = curr_node_ptr->next;
     }
@@ -343,10 +341,10 @@ void ctcp_send_what_we_can(ctcp_state_t *state_list) {
 
     // Subtract 1 because the ackno is byte they want next, not the last byte
     // they've received.
-    last_allowable_seqno = curr_state->tx_state.last_ackno_rxed - 1
-      + curr_state->ctcp_config.send_window;
+    last_allowable_seqno = state->tx_state.last_ackno_rxed - 1
+      + state->ctcp_config.send_window;
 
-    if (curr_state->tx_state.last_ackno_rxed == 0) {
+    if (state->tx_state.last_ackno_rxed == 0) {
       ++last_allowable_seqno; // last_ackno_rxed starts at 0
     }
 
@@ -360,13 +358,13 @@ void ctcp_send_what_we_can(ctcp_state_t *state_list) {
     // window. Any segments here that have not been sent can now be sent. The
     // first segment can be retransmitted if it timed out.
     if (wrapped_ctcp_segment_ptr->num_xmits == 0) {
-      ctcp_send_segment(curr_state, wrapped_ctcp_segment_ptr);
+      ctcp_send_segment(state, wrapped_ctcp_segment_ptr);
     } else if (i == 0) {
       // Check and see if we need to retrasnmit the first segment.
       ms_since_last_send = current_time() - wrapped_ctcp_segment_ptr->timestamp_of_last_send;
-      if (ms_since_last_send > curr_state->ctcp_config.rt_timeout) {
+      if (ms_since_last_send > state->ctcp_config.rt_timeout) {
         // Timeout. Resend the segment.
-        ctcp_send_segment(curr_state, wrapped_ctcp_segment_ptr);
+        ctcp_send_segment(state, wrapped_ctcp_segment_ptr);
       }
     }
   }
